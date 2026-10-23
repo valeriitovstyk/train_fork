@@ -15,10 +15,10 @@
         <p>ShortLine, 1992 — play in your browser</p>
         <button id="play" type="button">Play</button>
       </div>
+      <button id="fullscreen" type="button">Fullscreen</button>
     </div>
     <div id="controls">
       <span id="status" role="status">Ready</span>
-      <button id="fullscreen" type="button">Fullscreen</button>
     </div>
     <p id="error" role="alert" hidden></p>
   </main>
@@ -50,7 +50,7 @@
       status.textContent = 'Loading game…';
       try {
         const params = new URLSearchParams(location.search);
-        const args = [];
+        const args = ['--windowed'];
         if (params.get('classic') === '1') args.push('--classic-graphics');
         if (params.get('enhanced') === '1') args.push('--enhanced');
         if (params.get('perf') === '1') args.push('--perf-log');
