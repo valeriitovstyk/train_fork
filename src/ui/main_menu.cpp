@@ -233,7 +233,9 @@ void mainMenu()
 {
     for (;;) {
         g_lastKeyPressed = 0;
-        switch (handleDialog(DialogType::MainMenu)) {
+        switch (Driver::instance().vga().consumeAutostartGame() ? 2 :
+                Driver::instance().vga().consumeAutostartDemo() ? -1 :
+                handleDialog(DialogType::MainMenu)) {
         case 0:
             /* 15e8:04ea */
             // [M] Manual

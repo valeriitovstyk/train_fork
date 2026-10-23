@@ -15,10 +15,13 @@
 #include <SDL_main.h>
 
 #include <cstdio>
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <string>
+#include <vector>
 
 using namespace resl;
 
@@ -44,6 +47,15 @@ int usage(int /* argc */, char* argv[], int unknownArg = -1)
                  "The following options are available:\n"
                  "  --debug-graphics  enable debug video mode. In this mode, you will see the entire content of the video memory including invisible areas\n"
                  "  --windowed        run the game in windowed mode, do not expand to full screen\n"
+                 "  --dump-frames DIR save selected final frames as BMP files in DIR\n"
+                 "  --dump-at N,...   frame numbers to save (requires --dump-frames)\n"
+                 "  --dump-split N    save N frames during the next split-screen transition\n"
+                 "  --exit-after N    exit after N vertical retraces\n"
+                 "  --autostart-demo  start the first demo without waiting for menu timeout\n"
+                 "  --autostart-game  start a new game without waiting for menu input\n"
+                 "  --skip-intro      dismiss the opening poster after frame 12\n"
+                 "  --pause-at N      press the pause-menu shortcut at frame N (with --autostart-game)\n"
+                 "  --perf-log        print frame rate and classic upload cost once per second\n"
                  "  --help            show this help\n"
                  "\n"
               << std::endl;
@@ -124,6 +136,20 @@ int main(int argc, char* argv[])
 {
     bool debugGraphics = false;
     bool fullscreen = true;
+    bool autostartDemo = false;
+    bool autostartGame = false;
+    bool skipIntro = false;
+    bool perfLog = false;
+    std::string dumpDir;
+    std::vector<unsigned> dumpFrames;
+    unsigned exitAfter = 0;
+    unsigned pauseAt = 0;
+    unsigned dumpSplit = 0;
+
+    const auto parseUnsigned = [](const char* begin, const char* end, unsigned& value) {
+        const auto result = std::from_chars(begin, end, value);
+        return result.ec == std::errc{} && result.ptr == end;
+    };
 
     char* origGameArgv[3];
     origGameArgv[0] = argv[1];
@@ -134,6 +160,40 @@ int main(int argc, char* argv[])
             debugGraphics = true;
         else if (!std::strcmp(argv[i], "--windowed"))
             fullscreen = false;
+        else if (!std::strcmp(argv[i], "--autostart-demo"))
+            autostartDemo = true;
+        else if (!std::strcmp(argv[i], "--autostart-game"))
+            autostartGame = true;
+        else if (!std::strcmp(argv[i], "--skip-intro"))
+            skipIntro = true;
+        else if (!std::strcmp(argv[i], "--perf-log"))
+            perfLog = true;
+        else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc)
+            dumpDir = argv[++i];
+        else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) {
+            const char* value = argv[++i];
+            if (!parseUnsigned(value, value + std::strlen(value), exitAfter) || !exitAfter)
+                return usage(argc, argv, i);
+        } else if (!std::strcmp(argv[i], "--pause-at") && i + 1 < argc) {
+            const char* value = argv[++i];
+            if (!parseUnsigned(value, value + std::strlen(value), pauseAt) || !pauseAt)
+                return usage(argc, argv, i);
+        } else if (!std::strcmp(argv[i], "--dump-split") && i + 1 < argc) {
+            const char* value = argv[++i];
+            if (!parseUnsigned(value, value + std::strlen(value), dumpSplit) || !dumpSplit)
+                return usage(argc, argv, i);
+        } else if (!std::strcmp(argv[i], "--dump-at") && i + 1 < argc) {
+            const char* value = argv[++i];
+            do {
+                const char* comma = std::strchr(value, ',');
+                const char* end = comma ? comma : value + std::strlen(value);
+                unsigned frame = 0;
+                if (!parseUnsigned(value, end, frame) || !frame)
+                    return usage(argc, argv, i);
+                dumpFrames.push_back(frame);
+                value = comma ? comma + 1 : nullptr;
+            } while (value);
+        }
         else if (!std::strcmp(argv[i], "--help"))
             return usage(argc, argv);
         else if (argv[i][0] != '-' && origGameArgc < 3)
@@ -141,11 +201,18 @@ int main(int argc, char* argv[])
         else
             return usage(argc, argv, i);
     }
+    if ((!dumpFrames.empty() || dumpSplit) && dumpDir.empty())
+        return usage(argc, argv);
+    if ((autostartDemo && autostartGame) || (pauseAt && !autostartGame))
+        return usage(argc, argv);
 
     initFS();
 
     // Driver should be destroyed after scheduler => we have to initialize it first
     Driver::instance();
+    Driver::instance().vga().configureDiagnostics(
+        std::move(dumpDir), std::move(dumpFrames), exitAfter, perfLog,
+        autostartDemo, autostartGame, skipIntro, pauseAt, dumpSplit);
 
     if (debugGraphics)
         Driver::instance().vga().setDebugMode(true);

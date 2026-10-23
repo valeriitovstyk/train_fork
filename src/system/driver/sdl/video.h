@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,33 @@ public:
 
     void flush();
     void waitVerticalRetrace();
+
+    void configureDiagnostics(std::string dumpDir, std::vector<unsigned> dumpFrames,
+                              unsigned exitAfter, bool perfLog, bool autostartDemo,
+                              bool autostartGame, bool skipIntro,
+                              unsigned pauseAt, unsigned dumpSplit);
+    bool consumeSkipIntroAtFrame()
+    {
+        if (!m_skipIntro || m_frameCount < 12)
+            return false;
+        m_skipIntro = false;
+        return true;
+    }
+    bool consumeAutostartDemo()
+    {
+        return std::exchange(m_autostartDemo, false);
+    }
+    bool consumeAutostartGame()
+    {
+        return std::exchange(m_autostartGame, false);
+    }
+    bool consumePauseAtFrame()
+    {
+        if (!m_pauseAt || m_frameCount < m_pauseAt)
+            return false;
+        m_pauseAt = 0;
+        return true;
+    }
 
     void setDebugMode(bool debug);
     bool isDebugMode() const { return m_wndWidth != PHYSICAL_SCREEN_WIDTH; };
@@ -137,6 +165,29 @@ private:
 
     SDL_Rect m_dirtyRect = {};
     bool m_needRedraw = false;
+
+    std::string m_dumpDir;
+    std::vector<unsigned> m_dumpFrames;
+    unsigned m_frameCount = 0;
+    unsigned m_lastDumpedFrame = 0;
+    unsigned m_exitAfter = 0;
+    bool m_perfLog = false;
+    bool m_autostartDemo = false;
+    bool m_autostartGame = false;
+    bool m_skipIntro = false;
+    unsigned m_pauseAt = 0;
+    unsigned m_dumpSplitLeft = 0;
+    ClockT::time_point m_perfStart = ClockT::now();
+    unsigned m_perfFrames = 0;
+    unsigned m_perfUpdates = 0;
+    unsigned m_perfFullUpdates = 0;
+    double m_perfUpdateTotalMs = 0;
+    double m_perfUpdateMaxMs = 0;
+    double m_perfFullUpdateTotalMs = 0;
+    double m_perfFullUpdateMaxMs = 0;
+
+    void dumpFrame();
+    void logPerformance();
 
     friend class MouseDriver;
 };

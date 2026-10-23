@@ -1,0 +1,46 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [enhanced-graphics, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+      - name: Build web game
+        run: |
+          emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_NUMBER=${{ github.run_number }}
+          cmake --build build -j8
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp web/* build/resl.js build/resl.wasm site/
+          short_sha="$(git rev-parse --short HEAD)"
+          iteration="$(cat docs/enhanced-graphics/ITERATION)"
+          sed -i "s/__COMMIT_SHA__/${short_sha}/g; s/__ITERATION__/${iteration}/g" site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>reSL — enhanced graphics experiment</title>
+  <link rel="stylesheet" href="style.css?v=__COMMIT_SHA__">
+</head>
+<body>
+  <main>
+    <div id="game-shell">
+      <canvas id="canvas" width="640" height="480" tabindex="0" aria-label="reSL game"></canvas>
+      <div id="start-panel">
+        <h1>reSL</h1>
+        <p>ShortLine, 1992 — play in your browser</p>
+        <button id="play" type="button">Play</button>
+      </div>
+    </div>
+    <div id="controls">
+      <span id="status" role="status">Ready</span>
+      <button id="fullscreen" type="button">Fullscreen</button>
+    </div>
+    <p id="error" role="alert" hidden></p>
+  </main>
+  <footer>
+    reSL — enhanced graphics experiment (fork) · commit __COMMIT_SHA__ · iteration __ITERATION__ ·
+    <a href="https://github.com/konovalov-aleks/reSL">upstream</a> ·
+    <a href="https://github.com/valeriitovstyk/train_fork">fork</a> · GPLv3
+  </footer>
+  <script src="resl.js?v=__COMMIT_SHA__"></script>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const shell = document.getElementById('game-shell');
+    const play = document.getElementById('play');
+    const status = document.getElementById('status');
+    const error = document.getElementById('error');
+    const sha = '__COMMIT_SHA__';
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
+    canvas.addEventListener('webglcontextlost', event => {
+      event.preventDefault();
+      showError('WebGL context was lost. Reload the page to resume.');
+    });
+    function showError(message) {
+      error.textContent = message;
+      error.hidden = false;
+      status.textContent = 'Unable to run';
+    }
+    play.addEventListener('click', async () => {
+      play.disabled = true;
+      status.textContent = 'Loading game…';
+      try {
+        const params = new URLSearchParams(location.search);
+        const args = [];
+        if (params.get('classic') === '1') args.push('--classic-graphics');
+        if (params.get('enhanced') === '1') args.push('--enhanced');
+        if (params.get('perf') === '1') args.push('--perf-log');
+        if (['2', '4'].includes(params.get('scale'))) args.push('--scale', params.get('scale'));
+        const module = await createModule({
+          canvas,
+          locateFile: path => path.endsWith('.wasm') ? `resl.wasm?v=${sha}` : path,
+          setStatus: message => { if (message) status.textContent = message; }
+        });
+        document.getElementById('start-panel').hidden = true;
+        status.textContent = 'Playing';
+        canvas.focus();
+        await module.callMain(args);
+      } catch (reason) {
+        showError(`Game failed to start: ${reason}`);
+        play.disabled = false;
+      }
+    });
+    document.getElementById('fullscreen').addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await shell.requestFullscreen();
+        canvas.focus();
+      } catch (reason) {
+        showError(`Fullscreen failed: ${reason}`);
+      }
+    });
+  </script>
+</body>
+</html>

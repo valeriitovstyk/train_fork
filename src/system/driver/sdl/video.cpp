@@ -10,6 +10,7 @@
 #include <SDL_mouse.h>
 #include <SDL_pixels.h>
 #include <SDL_rect.h>
+#include <SDL_surface.h>
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -59,7 +62,29 @@ void VGAEmulation::flush()
     m_nextFrameTime = now + std::chrono::microseconds(1000000 / s_FPS);
 
     bool mouseAnimationUpdated = Driver::instance().mouse().updateAnimation();
-    if (updatePicture() || m_needRedraw || mouseAnimationUpdated) {
+    const bool splitTransition = m_vgaState.overflowLineCompare > 0 &&
+        m_vgaState.overflowLineCompare < LOGICAL_SCREEN_HEIGHT;
+    const bool captureSplit = m_dumpSplitLeft && splitTransition;
+    const bool capture = m_frameCount != m_lastDumpedFrame &&
+        (captureSplit || std::binary_search(
+            m_dumpFrames.begin(), m_dumpFrames.end(), m_frameCount));
+    const bool fullUpdate = m_dirtyRect.w >= m_wndWidth &&
+        m_dirtyRect.h >= LOGICAL_SCREEN_HEIGHT;
+    const ClockT::time_point updateStart = ClockT::now();
+    const bool pictureUpdated = updatePicture();
+    if (m_perfLog && pictureUpdated) {
+        const double elapsedMs =
+            std::chrono::duration<double, std::milli>(ClockT::now() - updateStart).count();
+        ++m_perfUpdates;
+        m_perfFullUpdates += fullUpdate;
+        m_perfUpdateTotalMs += elapsedMs;
+        m_perfUpdateMaxMs = std::max(m_perfUpdateMaxMs, elapsedMs);
+        if (fullUpdate) {
+            m_perfFullUpdateTotalMs += elapsedMs;
+            m_perfFullUpdateMaxMs = std::max(m_perfFullUpdateMaxMs, elapsedMs);
+        }
+    }
+    if (pictureUpdated || m_needRedraw || mouseAnimationUpdated || capture) {
         m_needRedraw = false;
 
         SDL_SetRenderDrawColor(m_renderer, 0x00, 0x00, 0x00, 0xFF);
@@ -129,6 +154,11 @@ void VGAEmulation::flush()
         }
 
         Driver::instance().mouse().drawCursor(m_renderer);
+        if (capture) {
+            dumpFrame();
+            if (captureSplit)
+                --m_dumpSplitLeft;
+        }
         SDL_RenderPresent(m_renderer);
 
         m_dirtyRect = {};
@@ -136,10 +166,14 @@ void VGAEmulation::flush()
 
     // need to poll events to make the image appear
     Driver::instance().pollEvent();
+    if (m_perfLog)
+        logPerformance();
 }
 
 void VGAEmulation::waitVerticalRetrace()
 {
+    ++m_frameCount;
+    ++m_perfFrames;
     const ClockT::time_point now = ClockT::now();
     if (now < m_nextFrameTime) {
 #ifdef __EMSCRIPTEN__
@@ -150,6 +184,92 @@ void VGAEmulation::waitVerticalRetrace()
 #endif
     }
     flush();
+    if (m_exitAfter && m_frameCount >= m_exitAfter) {
+        std::cout << "Exit after frame " << m_frameCount << '\n';
+        std::exit(EXIT_SUCCESS);
+    }
+}
+
+void VGAEmulation::configureDiagnostics(std::string dumpDir,
+                                        std::vector<unsigned> dumpFrames,
+                                        unsigned exitAfter, bool perfLog,
+                                        bool autostartDemo, bool autostartGame,
+                                        bool skipIntro, unsigned pauseAt,
+                                        unsigned dumpSplit)
+{
+    m_dumpDir = std::move(dumpDir);
+    m_dumpFrames = std::move(dumpFrames);
+    std::sort(m_dumpFrames.begin(), m_dumpFrames.end());
+    m_exitAfter = exitAfter;
+    m_perfLog = perfLog;
+    m_autostartDemo = autostartDemo;
+    m_autostartGame = autostartGame;
+    m_skipIntro = skipIntro || autostartDemo || autostartGame;
+    m_pauseAt = pauseAt;
+    m_dumpSplitLeft = dumpSplit;
+    m_perfStart = ClockT::now();
+    if (!m_dumpDir.empty())
+        std::filesystem::create_directories(m_dumpDir);
+}
+
+void VGAEmulation::dumpFrame()
+{
+    int width = 0;
+    int height = 0;
+    if (SDL_GetRendererOutputSize(m_renderer, &width, &height)) {
+        std::cerr << "Frame dump: unable to get renderer size: " << SDL_GetError() << '\n';
+        return;
+    }
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(
+        0, width, height, 24, SDL_PIXELFORMAT_RGB24);
+    if (!surface) {
+        std::cerr << "Frame dump: unable to create surface: " << SDL_GetError() << '\n';
+        return;
+    }
+    const std::filesystem::path path =
+        std::filesystem::path(m_dumpDir) /
+        ("frame-" + std::to_string(m_frameCount) + ".bmp");
+    if (SDL_RenderReadPixels(m_renderer, nullptr, surface->format->format,
+                             surface->pixels, surface->pitch) ||
+        SDL_SaveBMP(surface, path.string().c_str())) {
+        std::cerr << "Frame dump failed: " << SDL_GetError() << '\n';
+    } else {
+        m_lastDumpedFrame = m_frameCount;
+        std::cout << "Frame dump: " << path << '\n';
+    }
+    SDL_FreeSurface(surface);
+}
+
+void VGAEmulation::logPerformance()
+{
+    const ClockT::time_point now = ClockT::now();
+    const double elapsed = std::chrono::duration<double>(now - m_perfStart).count();
+    if (elapsed < 1.0)
+        return;
+    std::cout << std::fixed << std::setprecision(2)
+              << "PERF frame=" << m_frameCount
+              << " frames/s=" << m_perfFrames / elapsed
+              << " classic-update-avg-ms="
+              << (m_perfUpdates ? m_perfUpdateTotalMs / m_perfUpdates : 0)
+              << " classic-update-max-ms=" << m_perfUpdateMaxMs
+              << " typical-update-avg-ms="
+              << (m_perfUpdates > m_perfFullUpdates ?
+                    (m_perfUpdateTotalMs - m_perfFullUpdateTotalMs) /
+                        (m_perfUpdates - m_perfFullUpdates) : 0)
+              << " full-update-avg-ms="
+              << (m_perfFullUpdates ?
+                    m_perfFullUpdateTotalMs / m_perfFullUpdates : 0)
+              << " full-update-max-ms=" << m_perfFullUpdateMaxMs
+              << " full-updates=" << m_perfFullUpdates
+              << " mode=classic scale=1\n";
+    m_perfStart = now;
+    m_perfFrames = 0;
+    m_perfUpdates = 0;
+    m_perfFullUpdates = 0;
+    m_perfUpdateTotalMs = 0;
+    m_perfUpdateMaxMs = 0;
+    m_perfFullUpdateTotalMs = 0;
+    m_perfFullUpdateMaxMs = 0;
 }
 
 void VGAEmulation::setDebugMode(bool debug)

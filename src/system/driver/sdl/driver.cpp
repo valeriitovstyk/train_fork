@@ -89,6 +89,18 @@ void Driver::sleep(unsigned ms)
 
 void Driver::pollEvent()
 {
+    if (vga().consumeSkipIntroAtFrame()) {
+        SDL_KeyboardEvent scripted{};
+        scripted.type = SDL_KEYDOWN;
+        scripted.keysym.scancode = SDL_SCANCODE_SPACE;
+        onKeyboardEvent(scripted);
+    }
+    if (vga().consumePauseAtFrame()) {
+        SDL_KeyboardEvent scripted{};
+        scripted.type = SDL_KEYDOWN;
+        scripted.keysym.scancode = SDL_SCANCODE_B;
+        onKeyboardEvent(scripted);
+    }
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
